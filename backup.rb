@@ -14,79 +14,41 @@ module Zefyr
       zfs_source = Zefyr::ZFS.new(@source, @options)
       zfs_target = Zefyr::ZFS.new(@target, @options)
 
-      # Retrieve filesystems from source to transfer to target.
-      if @options[:children]
+      # Loop thru filesystems. Cannot use replication stream unless user
+      # specifies that nonexistent snapshots can be removed.
+      if @options[:children] && !@options[:destroy]
         zfs_source.get_filesystems.each do |filesystem|
+          source_snapshots = zfs_source.get_snapshots(filesystem) if zfs_source.has_filesystem?(filesystem)
+          target_snapshots = zfs_target.get_snapshots(filesystem) if zfs_target.has_filesystem?(filesystem)
 
-          # Create filesystem on target if it does not exist.
-          target_filesystem = @target.filesystem.nil? ? filesystem :
-              @target.filesystem.gsub(filesystem, @target.filesystem)
-          zfs_target.create_filesystem unless zfs_target.has_filesystem?
+          # Get latest snapshot that filesystems have in common
+          snapshot = (source_snapshots & target_snapshots).pop unless source_snapshots.nil? || target_snapshots.nil?
 
-          # Retrieve the snapshots for source & target filesystems
-          source_snapshots = zfs_source.get_snapshots(filesystem)
-          target_snapshots = zfs_target.get_snapshots(filesystem)
-
-          # Determine which snapshots need to be transferred to the target.
-          # Create the snapshot if the user indicates the desire to do so.
-          snapshots = nil
-          if @source.snapshot.nil?
-            if @options[:recursive]
-              snapshots = source_snapshots - target_snapshots
-            else
-              # Transfer last snapshot
-            end
-          elsif zfs_source.has_snapshot(filesystem) != @options[:create_snapshot]
-            if @options[:recursive]
-              snapshots = source_snapshots - target_snapshots
-            else
-              snapshots = @source.snapshot
-            end
-
-            if @options[:create_snapshot]
-              zfs_source.create_snapshot(filesystem)
-              snapshots.push(@source.snapshot) if @options[:recursive]
-            end
-          else
-            if @options[:create_snapshot]
-              STDERR.puts "Snapshot already exists."
-            else
-              STDERR.puts "Unknown snapshot: #{@source.snapshot}. Use -s flag to create snapshot."
-            end
-          end
-
-          if @options[:recursive]
-            previous_snapshot = nil
-            snapshots.each do |snapshot|
-              # TODO: Automatically determine the last snapshot and transfer
-              # an incremental snapshot instead of the full. This snapshot could
-              # be the previous snapshot transferred if transferring multiple
-              # snapshots.
-
-              # If target doesn't have snapshots or source & target do not share a
-              # common snapshot then transfer first snapshot.
-              if target_snapshots.nil? || (snapshots - source_snapshots).nil?
-                zfs_source.copy_snapshot(zfs_target, snapshot)
-              else
-                zfs_source.copy_incremental_snapshot(zfs_target, snapshot, previous_snapshot)
-              end
-
-              previous_snapshot = snapshot
-            end
-          end
-
-          # Remove all snapshots that are not present in source filesystems
-          if @options[:destroy]
-            obsolete_snapshots = target_snapshots - source_snapshots
-            obsolete_snapshots.each do |snapshot|
-              zfs_target.destroy_snapshot(snapshot)
-            end
-          end
+          # Copy snapshot to target
+          snapshot_copied = snapshot.nil? ? zfs_source.copy_snapshot(zfs_target, filesystem) :
+            zfs_source.copy_incremental_snapshot(zfs_target, snapshot, filesystem)
         end
       else
+        # Retrieve snapshots from both filesystems
+        source_snapshots = zfs_source.get_snapshots(@source.filesystem) if zfs_source.has_filesystem?(@source.filesystem)
+        target_snapshots = zfs_target.get_snapshots(@source.filesystem) if zfs_target.has_filesystem?(@source.filesystem)
 
+        # Get latest snapshot that filesystems have in common
+        snapshot = (source_snapshots & target_snapshots).pop unless source_snapshots.nil? || target_snapshots.nil?
+
+        # Copy snapshot to target
+        snapshot_copied = snapshot.nil? ? zfs_source.copy_snapshot(zfs_target) : 
+          zfs_source.copy_incremental_snapshot(zfs_target, snapshot)
+
+        unless snapshot_copied || target_snapshots.nil?
+          # Destroy snapshots on target filesystem that are not present
+          # on source filesystem.
+          if @options[:destroy]
+            snapshots = target_snapshots - source_snapshots
+            snapshots.each { |snapshot| zfs_target.destroy_snapshot(snapshot) }
+          end
+        end
       end
     end
-
   end
 end

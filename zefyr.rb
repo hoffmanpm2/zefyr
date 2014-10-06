@@ -41,10 +41,10 @@ module Zefyr
 				@host = nil
 				@filesystem = filesystem
 				@snapshot = snapshot
-      else
-        @host = nil
+			else
+				@host = nil
 				@filesystem = operand
-        @snapshot = nil
+				@snapshot = nil
 			end
 		end
 
@@ -62,9 +62,8 @@ module Zefyr
     end
 end
 
-
 options = {}
-syntax = "Syntax: zefyr backup [-crvdnps] [-e command] [USER@][HOST:]FS[@SNAP] [USER@]HOST
+syntax = "Syntax: zefyr backup [-crvdnps] [-e command] [USER@][HOST:]FS[@SNAP] [USER@]HOST[:FS]
 	zefyr restore [-cvnp] [-e command] [USER@]HOST:FS[@SNAP] [USER@]HOST"
 
 # Parse command-line options
@@ -121,33 +120,33 @@ option_parser.parse!
 
 # Parse command-line operands
 unless ARGV.empty?
-	subcommand = ARGV.shift
-	unless subcommand == 'backup' or subcommand == 'restore'
-		puts "Unknown operand: '#{subcommand}'"
-		puts syntax
-		exit
-	end
-
 	source = nil
 	target = nil
+	subcommand = ARGV.shift
 	if ARGV.length == 2
 		source = Zefyr::Operand.new(ARGV.shift)
 		target = Zefyr::Operand.new(ARGV.shift)
-		puts "Source:\n#{source}"
-		puts "Target:\n#{target}"
 
 		# Create backup or restore object here
-		operation = subcommand == 'backup' ? Zefyr::Backup.new(source, target, options) :
-			Zefyr::Restore.new(source, target, options)
-		operation.execute
+		operation = case subcommand 
+		when 'backup' then Zefyr::Backup.new(source, target, options)
+		else then nil
+		end
+
+		unless operation.nil?
+			operation.execute
+		else
+			puts "Unknown operand: '#{subcommand}'"
+			puts syntax
+		end
 	elsif ARGV.length < 2
-		puts "Error: 'Too few operands'"
+		STDERR.puts "Error: 'Too few operands'"
 		puts syntax
 	else
-		puts "Error: 'Too many operands'"
+		STDERR.puts "Error: 'Too many operands'"
 		puts syntax
 	end
 else
-	puts "Error: Missing subcommand."
+	STDERR.puts "Error: Missing subcommand."
 	puts syntax
 end
